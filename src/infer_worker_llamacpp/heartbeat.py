@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -17,6 +18,15 @@ from mining_types import (
 )
 
 from infer_worker_llamacpp.config import WorkerConfig
+
+
+def _gateway_auth_headers(config: WorkerConfig) -> dict[str, str]:
+    token = (
+        config.gateway_auth_token
+        or os.environ.get("GATEWAY_INTERNAL_AUTH_TOKEN", "")
+        or os.environ.get("INTERNAL_AUTH_TOKEN", "")
+    ).strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _quantization_for(name: str) -> Quantization:
@@ -81,6 +91,7 @@ class HeartbeatPusher:
                     await client.post(
                         f"{self.gateway_url}/internal/heartbeat",
                         json=hb.model_dump(mode="json"),
+                        headers=_gateway_auth_headers(self.config),
                     )
                 except httpx.HTTPError:
                     pass

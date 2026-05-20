@@ -27,7 +27,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-
 PLACEHOLDER_HASH = "ab" * 32
 _LOG = logging.getLogger("infer_worker_llamacpp.weights")
 _CHUNK = 1 << 20  # 1 MiB
@@ -88,13 +87,18 @@ def verify_weights(config: Any) -> None:
             `OROGEN_ENV=production`, or when the computed hash disagrees
             with the declared one.
     """
-    if os.environ.get("OROGEN_WORKER_SKIP_WEIGHT_CHECK") == "1":
-        _LOG.info("weight verification skipped via OROGEN_WORKER_SKIP_WEIGHT_CHECK=1")
-        return
-
     declared = _normalize(config.model_weight_hash)
     is_placeholder = declared == PLACEHOLDER_HASH
     env = os.environ.get("OROGEN_ENV", "dev").lower()
+
+    if os.environ.get("OROGEN_WORKER_SKIP_WEIGHT_CHECK") == "1":
+        if env == "production":
+            raise RuntimeError(
+                "refusing to start: OROGEN_WORKER_SKIP_WEIGHT_CHECK=1 is not allowed "
+                "under OROGEN_ENV=production"
+            )
+        _LOG.info("weight verification skipped via OROGEN_WORKER_SKIP_WEIGHT_CHECK=1")
+        return
 
     if is_placeholder:
         if env == "production":
@@ -112,6 +116,8 @@ def verify_weights(config: Any) -> None:
 
     model_path = _resolve_model_path(config)
     if not model_path:
+        if env == "production":
+            raise RuntimeError("refusing to start: model weight path required in production")
         _LOG.warning(
             "model weight path not configured; skipping verification "
             "(Mock engines have no on-disk weights to hash)"
@@ -119,6 +125,10 @@ def verify_weights(config: Any) -> None:
         return
     p = Path(model_path)
     if not p.exists():
+        if env == "production":
+            raise RuntimeError(
+                f"refusing to start: model weight path={model_path} does not exist in production"
+            )
         _LOG.warning(
             "model weight path=%s does not exist; skipping verification "
             "(Mock engines have no on-disk weights to hash)",

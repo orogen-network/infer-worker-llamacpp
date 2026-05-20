@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-
 # H-03: hard caps on what the subprocess wrapper will accept. The defaults
 # can be overridden per-instance, but a max prompt length is REQUIRED
 # (otherwise an attacker can `-p <16 MiB prompt>` and pin the GPU forever).

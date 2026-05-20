@@ -25,7 +25,7 @@ from infer_worker_llamacpp.engine import (
     PromptInvalidError,
     PromptTooLargeError,
 )
-from infer_worker_llamacpp.heartbeat import build_heartbeat
+from infer_worker_llamacpp.heartbeat import _gateway_auth_headers, build_heartbeat
 from infer_worker_llamacpp.weights import verify_weights
 
 
@@ -50,6 +50,30 @@ def test_mock_engine_is_deterministic(config: WorkerConfig) -> None:
     assert r1.text == r2.text
     assert r1.log_probs == r2.log_probs
     assert r1.tokens[0].startswith("lc")
+
+
+def test_replay_endpoint_recomputes_response_hash(config: WorkerConfig) -> None:
+    app = build_app(config)
+    prompt = "hello replay"
+    request_hash = hashlib.sha256(f"{prompt}|{config.model_id}|0|8".encode()).hexdigest()
+    expected = hashlib.sha256(
+        MockLlamaCppEngine(config.model_id).generate(prompt, max_tokens=8, seed=0).text.encode()
+    ).hexdigest()
+    with TestClient(app) as client:
+        r = client.post(
+            "/v1/replay",
+            json={
+                "job_id": "j-replay",
+                "model_id": config.model_id,
+                "request_hash": request_hash,
+                "customer_nonce": _nonce(),
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 8,
+                "seed": 0,
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["response_hash"] == expected
 
 
 def test_binary_engine_raises_without_binary(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -93,6 +117,11 @@ def test_healthz_reports_edge_tier(config: WorkerConfig) -> None:
         assert body["engine"] == "MockLlamaCppEngine"
 
 
+def test_heartbeat_pusher_includes_gateway_auth(config: WorkerConfig) -> None:
+    config.gateway_auth_token = "gw-secret"
+    assert _gateway_auth_headers(config) == {"Authorization": "Bearer gw-secret"}
+
+
 def test_chat_completions_emits_signed_receipt(config: WorkerConfig) -> None:
     app = build_app(config)
     with TestClient(app) as client:
@@ -110,6 +139,28 @@ def test_chat_completions_emits_signed_receipt(config: WorkerConfig) -> None:
         assert rec.operator_id == "op-edge"
         assert rec.gpu_model == "cpu-edge"
         assert rec.operator_signature
+
+
+def test_chat_requires_worker_auth_when_token_configured(
+    monkeypatch: pytest.MonkeyPatch, config: WorkerConfig,
+) -> None:
+    monkeypatch.setenv("OROGEN_ENV", "staging")
+    monkeypatch.setenv("OROGEN_WORKER_SKIP_WEIGHT_CHECK", "1")
+    monkeypatch.setenv("WORKER_API_TOKEN", "worker-secret")
+    app = build_app(config)
+    with TestClient(app) as client:
+        body = {
+            "model": config.model_id,
+            "messages": [{"role": "user", "content": "say hi"}],
+            "customer_nonce": _nonce(),
+        }
+        assert client.post("/v1/chat/completions", json=body).status_code == 401
+        ok = client.post(
+            "/v1/chat/completions",
+            json=body,
+            headers={"Authorization": "Bearer worker-secret"},
+        )
+        assert ok.status_code == 200, ok.text
 
 
 def test_chat_rejects_missing_customer_nonce(config: WorkerConfig) -> None:

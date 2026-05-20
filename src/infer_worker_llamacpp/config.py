@@ -18,6 +18,7 @@ class WorkerConfig:
     heartbeat_interval_s: float = 12.0
     base_url: str = ""
     capabilities: list[str] = field(default_factory=lambda: ["mock-llamacpp-7b-q4"])
+    gateway_auth_token: str = ""
     deterministic_mode: bool = True
     # llama.cpp typically runs INT4 quantized on edge.
     quantization: str = "INT4"
